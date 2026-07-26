@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # SERVICE 1: High-Speed In-Memory Cache Grid
+  # ==========================================
+  redis:
+    image: "redis:7.2-alpine"
+    container_name: "segmentation_cache_grid"
+    ports:
+      - "6379:6379"
+    restart: "always"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - segmentation_network
+
+  # ==========================================
+  # SERVICE 2: FastAPI Machine Learning Server
+  # ==========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: "segmentation_api_server"
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    restart: "unless-stopped"
+    depends_on:
+      redis:
+        condition: service_healthy  # Ensures ML engine won't boot up until caching ring is fully online
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/health\")'"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    networks:
+      - segmentation_network
+
+  # ==========================================
+  # SERVICE 3: Streamlit Analytics User Interface
+  # ==========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: "segmentation_visual_panel"
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_API_URL=http://backend:8000/segment/
+    restart: "unless-stopped"
+    depends_on:
+      backend:
+        condition: service_healthy  # Dashboard waits for the API endpoints to pass internal structural checks
+    networks:
+      - segmentation_network
+
+# ==========================================
+# SYSTEM NETWORK INFRASTRUCTURE ISOLATION
+# ==========================================
+networks:
+  segmentation_network:
+    driver: bridge
+    name: customer_segmentation_bridge
